@@ -1,10 +1,10 @@
 # DoomLab FPS
 
 ## Repo layout
-- server/ — FastAPI + Socket.IO authoritative server
-- web/ — static frontend (CDN scripts, no build)
-- infra/ — Terraform IaC
-- scripts/ — start/stop/deploy helpers
+- server/ - FastAPI + Socket.IO authoritative server
+- web/ - static frontend (CDN scripts, no build)
+- infra/ - Terraform IaC
+- scripts/ - start/stop/deploy helpers
 
 ## Approach
 - Start simple (KISS), avoid over-engineering (YAGNI), reuse where possible (DRY).
