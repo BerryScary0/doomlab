@@ -1,10 +1,32 @@
 <!doctype html>
-<html>
-  <body>
-    <h1>DoomLab – Ping Test</h1>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>DoomLab</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas { display: block; }
+  </style>
 
-    <!-- Socket.IO client from CDN -->
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-    <script src="./net.js"></script>
-  </body>
+  <!-- Import map for Three.js -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <!-- Socket.IO -->
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
+  <!-- Three.js -->
+  <script src="./net.js"></script>
+
+  <!-- ES module imports -->
+  <script type="module" src="./game.js"></script>
+</head>
+<body>
+</body>
 </html>
