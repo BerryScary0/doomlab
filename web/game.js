@@ -24,6 +24,13 @@ const floor = new THREE.Mesh(
 floor.rotation.x = -Math.PI / 2;
 scene.add(floor);
 
+// add a grid to visualize the ground
+const WORLD = {
+  minX: -45, maxX: 45,
+  minZ: -45, maxZ: 45,
+  groundY: 0
+};
+
 function addFence() {
   const mat = new THREE.LineBasicMaterial({ color: 0x4444ff });
   const g = new THREE.BufferGeometry();
@@ -40,20 +47,201 @@ function addFence() {
 addFence();
 
 
-// add a grid to visualize the ground
-const WORLD = {
-  minX: -45, maxX: 45,
-  minZ: -45, maxZ: 45,
-  groundY: 0
-};
-
-
 const cube = new THREE.Mesh(
   new THREE.BoxGeometry(1, 1, 1),
   new THREE.MeshBasicMaterial({ color: 0x00ff00 })
 );
 cube.position.set(3, 0.5, -5);
 scene.add(cube);
+
+
+
+// === BIG MAZE WALLS (merged + trimmed at corners) ===================
+const WALL_HEIGHT    = 2.4;
+const WALL_THICKNESS = 0.30;
+// extra clearance at corners (on top of half-thickness). Bump if you want wider gaps.
+const TRIM_EXTRA     = 0.12;
+const EPS            = 1e-4;
+
+// Use Standard if you already added lights; swap to MeshBasicMaterial if not.
+const wallMaterial = new THREE.MeshBasicMaterial({ color: 0x5a84ff });
+
+const wallGroup = new THREE.Group();
+scene.add(wallGroup);
+
+// --- helpers ---
+function roundKey(v) { return Math.round(v * 1000) / 1000; }
+function key(x, z)    { return `${roundKey(x)}|${roundKey(z)}`; }
+
+function normalizeSeg([x0, z0, x1, z1]) {
+  const dx = x1 - x0, dz = z1 - z0;
+  // assume maze is axis-aligned; choose orientation by dominant axis
+  if (Math.abs(dx) >= Math.abs(dz)) {
+    // horizontal (sort left->right)
+    if (x1 < x0) { [x0, x1] = [x1, x0]; [z0, z1] = [z1, z0]; }
+    return { o:'H', x0, z0, x1, z1 };
+  } else {
+    // vertical (sort bottom->top)
+    if (z1 < z0) { [x0, x1] = [x1, x0]; [z0, z1] = [z1, z0]; }
+    return { o:'V', x0, z0, x1, z1 };
+  }
+}
+
+function mergeColinear(segs) {
+  // group by orientation + shared constant axis (x for vertical, z for horizontal)
+  const buckets = new Map();
+  for (const s of segs) {
+    const r = normalizeSeg(s);
+    const axisVal = r.o === 'H' ? roundKey(r.z0) : roundKey(r.x0);
+    const k = `${r.o}|${axisVal}`;
+    if (!buckets.has(k)) buckets.set(k, []);
+    buckets.get(k).push(r);
+  }
+
+  const merged = [];
+  for (const [k, arr] of buckets) {
+    if (!arr.length) continue;
+    // sort along running axis
+    if (arr[0].o === 'H') arr.sort((a,b) => a.x0 - b.x0);
+    else                  arr.sort((a,b) => a.z0 - b.z0);
+
+    // sweep-merge overlapping/contiguous
+    let cur = arr[0];
+    for (let i = 1; i < arr.length; i++) {
+      const s = arr[i];
+      if (cur.o === 'H') {
+        // same z line
+        if (s.x0 <= cur.x1 + EPS && Math.abs(s.z0 - cur.z0) < EPS) {
+          // extend
+          cur.x1 = Math.max(cur.x1, s.x1);
+        } else {
+          merged.push(cur);
+          cur = s;
+        }
+      } else {
+        // vertical: same x line
+        if (s.z0 <= cur.z1 + EPS && Math.abs(s.x0 - cur.x0) < EPS) {
+          cur.z1 = Math.max(cur.z1, s.z1);
+        } else {
+          merged.push(cur);
+          cur = s;
+        }
+      }
+    }
+    merged.push(cur);
+  }
+  // back to simple tuple form
+  return merged.map(r => [r.x0, r.z0, r.x1, r.z1]);
+}
+
+function buildMaze(maze) {
+  wallGroup.clear();
+  if (!maze || !Array.isArray(maze.walls)) return;
+
+  // 1) merge to avoid tiny slits along straight runs
+  const merged = mergeColinear(maze.walls);
+
+  // 2) global extents (used to detect the outer border)
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (const [x0, z0, x1, z1] of merged) {
+    minX = Math.min(minX, x0, x1);
+    maxX = Math.max(maxX, x0, x1);
+    minZ = Math.min(minZ, z0, z1);
+    maxZ = Math.max(maxZ, z0, z1);
+  }
+  const onBorder = (x, z) =>
+    Math.abs(x - minX) < 1e-4 || Math.abs(x - maxX) < 1e-4 ||
+    Math.abs(z - minZ) < 1e-4 || Math.abs(z - maxZ) < 1e-4;
+
+  // 3) build endpoint junction map (where to trim)
+  const ends = new Map(); // key(x,z) -> array of {ux,uz}
+  for (const [x0, z0, x1, z1] of merged) {
+    const dx = x1 - x0, dz = z1 - z0;
+    const len = Math.hypot(dx, dz);
+    if (len < 1e-6) continue;
+    const ux = dx / len, uz = dz / len;
+    const kA = key(x0, z0), kB = key(x1, z1);
+    if (!ends.has(kA)) ends.set(kA, []);
+    if (!ends.has(kB)) ends.set(kB, []);
+    ends.get(kA).push({ ux, uz });
+    ends.get(kB).push({ ux: -ux, uz: -uz });
+  }
+
+  // 4) emit meshes; trim only at interior junctions (never trim border segments)
+  const HALF_T = WALL_THICKNESS * 0.5;
+  for (const [x0, z0, x1, z1] of merged) {
+    const dx = x1 - x0, dz = z1 - z0;
+    let len = Math.hypot(dx, dz);
+    if (len < 1e-6) continue;
+
+    const ux = dx / len, uz = dz / len;
+    const kA = key(x0, z0), kB = key(x1, z1);
+
+    const meetsA = (ends.get(kA)?.length || 0) > 1;
+    const meetsB = (ends.get(kB)?.length || 0) > 1;
+
+    const isAonBorder = onBorder(x0, z0);
+    const isBonBorder = onBorder(x1, z1);
+
+    // trim only if it's a junction AND not on the border
+    let trimA = (!isAonBorder && meetsA) ? (HALF_T + TRIM_EXTRA) : 0.0;
+    let trimB = (!isBonBorder && meetsB) ? (HALF_T + TRIM_EXTRA) : 0.0;
+
+    const inner = Math.max(0.001, len - (trimA + trimB));
+
+    // center shifted by half the trim delta
+    const cx = (x0 + x1) * 0.5 + (trimB - trimA) * 0.5 * ux;
+    const cz = (z0 + z1) * 0.5 + (trimB - trimA) * 0.5 * uz;
+
+    const geom = new THREE.BoxGeometry(inner + WALL_THICKNESS, WALL_HEIGHT, WALL_THICKNESS);
+    const mesh = new THREE.Mesh(geom, wallMaterial);
+    mesh.position.set(cx, WALL_HEIGHT / 2, cz);
+    mesh.rotation.y = Math.atan2(ux, uz);
+    wallGroup.add(mesh);
+  }
+
+  // 5) update your simple AABB clamp to the maze extents (prevents walking “outside”)
+  WORLD.minX = minX - 0.5;
+  WORLD.maxX = maxX + 0.5;
+  WORLD.minZ = minZ - 0.5;
+  WORLD.maxZ = maxZ + 0.5;
+}
+
+// ====================================================================
+
+const pickupGroup = new THREE.Group(); scene.add(pickupGroup);
+
+
+// --- Bots ---
+const botGroup = new THREE.Group();
+scene.add(botGroup);
+const botGeo = new THREE.ConeGeometry(0.4, 1.0, 10);
+const botMat = new THREE.MeshBasicMaterial({ color: 0xff3333, wireframe: true });
+
+
+function buildPickups(picks) {
+  pickupGroup.clear();
+  for (const p of picks) {
+    if (p.taken_by) continue;
+    const m = new THREE.Mesh(
+      new THREE.SphereGeometry(0.3, 12, 12),
+      new THREE.MeshBasicMaterial({ color: 0xffcc00 })
+    );
+    m.position.set(p.x, 0.3, p.z);
+    pickupGroup.add(m);
+  }
+}
+
+function syncBots(bots = []) {
+  botGroup.clear();
+  for (const b of bots) {
+    const m = new THREE.Mesh(botGeo, botMat);
+    m.position.set(b.x, 0.5, b.z);
+    m.rotation.y = b.yaw;
+    botGroup.add(m);
+  }
+}
+
 
 // --- Pointer lock controls (mouse look) ---
 const controls = new PointerLockControls(camera, renderer.domElement);
@@ -88,6 +276,34 @@ document.addEventListener('keyup', (e) => {
 
 // --- Networking handles ---
 const netSocket = window.__socket; // from net.js
+netSocket.on("world", (data) => {
+  if (data.maze) buildMaze(data.maze);
+  if (data.pickups) buildPickups(data.pickups);
+});
+
+netSocket.on("pickup_taken", (e) => {
+  // Rebuild from snapshot next tick; or quick hide:
+  buildPickups((window.__lastSnapshot && window.__lastSnapshot.pickups) || []);
+});
+
+netSocket.on("snapshot", (snap) => {
+  // Keep your existing player updates...
+  // Also mirror pickups for quick rebuild:
+  window.__lastSnapshot = snap;
+  if (snap.pickups) buildPickups(snap.pickups);
+  if (snap.bots) syncBots(snap.bots);
+});
+
+netSocket.on("hello", ({ sid }) => {
+  console.log("you are", sid);
+});
+
+netSocket.on("respawn", ({ sid }) => {
+  if (!netSocket || sid !== netSocket.id) return;
+  // snap camera to server spawn; server will soon confirm in snapshot anyway
+  controls.getObject().position.set(0.5, 1.6, 0.5);
+  initFromServer = false; // let syncToMe hard-set next tick
+});
 
 // Remote players (including our red "ghost" from server)
 const others = new Map(); // sid -> Mesh
@@ -139,7 +355,7 @@ function animate() {
 
     // Right = forward × up  (matches server basis exactly)
     right.crossVectors(dir, up).normalize();
-
+    
     // Build velocity from inputs
     vel.set(0, 0, 0);
     if (moveF) vel.add(dir);
@@ -162,6 +378,7 @@ function animate() {
       if (obj.z > WORLD.maxZ) obj.z = WORLD.maxZ;
 
     }
+     
   }
 
   // Send inputs every frame (smooth server dt)
