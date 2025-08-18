@@ -14,6 +14,13 @@ WORLD = {
     # sid -> {"x","y","z","yaw","lives","alive","_t"}
     "players": {}
 }
+
+WORLD_BOUNDS = {
+    "minX": -45.0, "maxX": 45.0,
+    "minZ": -45.0, "maxZ": 45.0,
+    "groundY": 0.0
+}
+
 TICK_HZ = 15
 
 def spawn_state():
@@ -78,6 +85,14 @@ async def on_input(sid, data):
 
     p["x"] = p.get("x", 0.5) + vx * dt
     p["z"] = p.get("z", 0.5) + vz * dt
+
+    # clamp to bounds (authoritative)
+    if p["x"] < WORLD_BOUNDS["minX"]: p["x"] = WORLD_BOUNDS["minX"]
+    if p["x"] > WORLD_BOUNDS["maxX"]: p["x"] = WORLD_BOUNDS["maxX"]
+    if p["z"] < WORLD_BOUNDS["minZ"]: p["z"] = WORLD_BOUNDS["minZ"]
+    if p["z"] > WORLD_BOUNDS["maxZ"]: p["z"] = WORLD_BOUNDS["maxZ"]
+    p["y"] = 1.6  # keep eye height stable over flat ground
+
 
 # --- Snapshot loop (share positions) ---
 async def snapshot_loop():

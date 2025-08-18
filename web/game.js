@@ -24,6 +24,30 @@ const floor = new THREE.Mesh(
 floor.rotation.x = -Math.PI / 2;
 scene.add(floor);
 
+function addFence() {
+  const mat = new THREE.LineBasicMaterial({ color: 0x4444ff });
+  const g = new THREE.BufferGeometry();
+  const x0 = WORLD.minX, x1 = WORLD.maxX, z0 = WORLD.minZ, z1 = WORLD.maxZ, y = 0.01;
+  const pts = [
+    new THREE.Vector3(x0, y, z0), new THREE.Vector3(x1, y, z0),
+    new THREE.Vector3(x1, y, z1), new THREE.Vector3(x0, y, z1),
+    new THREE.Vector3(x0, y, z0)
+  ];
+  g.setFromPoints(pts);
+  const line = new THREE.Line(g, mat);
+  scene.add(line);
+}
+addFence();
+
+
+// add a grid to visualize the ground
+const WORLD = {
+  minX: -45, maxX: 45,
+  minZ: -45, maxZ: 45,
+  groundY: 0
+};
+
+
 const cube = new THREE.Mesh(
   new THREE.BoxGeometry(1, 1, 1),
   new THREE.MeshBasicMaterial({ color: 0x00ff00 })
@@ -126,6 +150,17 @@ function animate() {
     if (vel.lengthSq() > 0) {
       vel.normalize().multiplyScalar(speed * dt);
       controls.getObject().position.add(vel);
+
+      const obj = controls.getObject().position;
+      // keep feet on the “ground”
+      obj.y = 1.6; // eye height over y=0 ground
+
+      // clamp to world bounds (simple AABB)
+      if (obj.x < WORLD.minX) obj.x = WORLD.minX;
+      if (obj.x > WORLD.maxX) obj.x = WORLD.maxX;
+      if (obj.z < WORLD.minZ) obj.z = WORLD.minZ;
+      if (obj.z > WORLD.maxZ) obj.z = WORLD.maxZ;
+
     }
   }
 
